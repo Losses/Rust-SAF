@@ -1,0 +1,13 @@
+[package]
+name = "ndk-saf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0.89", features = ["backtrace"] }
+ndk-context = "0.1.1"
+jni = "0.21.1"
+log = { version = "0.4.22" }
+
+[build-dependencies]
+anyhow = { version = "1.0.89", features = ["backtrace"] }
