@@ -48,6 +48,8 @@ class MainActivity : AppCompatActivity() {
                 val documentFile = DocumentFile.fromTreeUri(this, it)
                 textView.text = textView.text as String + "\n" + documentFile?.name + "\n" + documentFile?.exists()
                 listUriFiles(it.toString())
+                // Start FileListActivity to show files in the selected directory
+                FileListActivity.start(this, it)
             }
         }
         textView = findViewById(R.id.text_view)
