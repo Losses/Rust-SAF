@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Ok, Result};
-use jni::objects::{GlobalRef, JObject, JObjectArray, JString, JValueGen};
-use jni::sys::jobject;
+use jni::objects::{GlobalRef, JObject, JString, JValueGen};
 use jni::JNIEnv;
 use log::info;
 use ndk_context::android_context;
@@ -209,10 +208,8 @@ impl AndroidFileOps for AndroidFile {
 
     /// List files in the directory represented by the AndroidFile object. If the object does not
     /// represent a tree directory, an error will be returned.
-    /// THIS IS CURRENTLY VERY SLOW due to the way the Android SAF API is designed. See comments
-    /// below for more information.
     fn list_files(&self) -> Result<Vec<AndroidFile>> {
-        // Check if the DocumentFile object represents a  directory
+        // Check if the DocumentFile object represents a directory
         if !self.is_dir {
             return Err(anyhow!("The provided URL does not point to a directory"));
         }
@@ -222,35 +219,179 @@ impl AndroidFileOps for AndroidFile {
         let ctx = android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast())? };
         let mut env = vm.attach_current_thread()?;
+        let context = get_global_context(&mut env)?;
 
-        // Call listFiles method to get the list of files
-        // TODO: use this to accelerate the process:
-        // https://stackoverflow.com/questions/41096332/issues-traversing-through-directory-hierarchy-with-android-storage-access-framew
-        // and why this is so slow:
-        // https://stackoverflow.com/questions/42186820/why-is-documentfile-so-slow-and-what-should-i-use-instead
-        let files_array = env
+        // Get ContentResolver
+        let content_resolver = env
             .call_method(
-                &self.document_file,
-                "listFiles",
-                "()[Landroidx/documentfile/provider/DocumentFile;",
+                context.as_obj(),
+                "getContentResolver",
+                "()Landroid/content/ContentResolver;",
                 &[],
             )?
             .l()?;
-        let files_len = env
-            .get_array_length(unsafe { &JObjectArray::from_raw(files_array.clone() as jobject) })?;
 
-        // Iterate through the list of files and get their information
+        // Parse parent URI from self.url
+        let parent_uri_str = env.new_string(&self.url)?;
+        let parent_uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValueGen::Object(&parent_uri_str)],
+            )?
+            .l()?;
+
+        let documents_contract_class = "android/provider/DocumentsContract";
+        // Get document ID of parent URI
+        let parent_document_id = env
+            .call_static_method(
+                documents_contract_class,
+                "getDocumentId",
+                "(Landroid/net/Uri;)Ljava/lang/String;",
+                &[JValueGen::Object(&parent_uri)],
+            )?
+            .l()?;
+
+        // Build children URI
+        let children_uri = env
+            .call_static_method(
+                documents_contract_class,
+                "buildChildDocumentsUriUsingTree",
+                "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+                &[
+                    JValueGen::Object(&parent_uri),
+                    JValueGen::Object(&parent_document_id),
+                ],
+            )?
+            .l()?;
+
+        // Define projection
+        let document_class = "android/provider/DocumentsContract$Document";
+        let column_document_id = env
+            .get_static_field(document_class, "COLUMN_DOCUMENT_ID", "Ljava/lang/String;")?
+            .l()?;
+        let column_display_name = env
+            .get_static_field(document_class, "COLUMN_DISPLAY_NAME", "Ljava/lang/String;")?
+            .l()?;
+        let column_size = env
+            .get_static_field(document_class, "COLUMN_SIZE", "Ljava/lang/String;")?
+            .l()?;
+        let column_mime_type = env
+            .get_static_field(document_class, "COLUMN_MIME_TYPE", "Ljava/lang/String;")?
+            .l()?;
+
+        let projection = env.new_object_array(4, "java/lang/String", JObject::null())?;
+        env.set_object_array_element(&projection, 0, column_document_id)?;
+        env.set_object_array_element(&projection, 1, column_display_name)?;
+        env.set_object_array_element(&projection, 2, column_size)?;
+        env.set_object_array_element(&projection, 3, column_mime_type)?;
+
+        // Query
+        let cursor = env
+            .call_method(
+                &content_resolver,
+                "query",
+                "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+                &[
+                    JValueGen::Object(&children_uri),
+                    JValueGen::Object(&projection),
+                    JValueGen::Object(&JObject::null()),
+                    JValueGen::Object(&JObject::null()),
+                    JValueGen::Object(&JObject::null()),
+                ],
+            )?
+            .l()?;
+
+        // Get MIME type for directory to compare against
+        let mime_type_dir = env
+            .get_static_field(document_class, "MIME_TYPE_DIR", "Ljava/lang/String;")?
+            .l()?;
+
         let mut files = Vec::new();
-        for i in 0..files_len {
-            let file_obj = env.get_object_array_element(
-                unsafe { &JObjectArray::from_raw(files_array.clone() as jobject) },
-                i,
-            )?;
+        // Check if cursor is not null
+        if !cursor.is_null() {
+            // Iterate through the cursor
+            while env.call_method(&cursor, "moveToNext", "()Z", &[])?.z()? {
+                // Get column values
+                let doc_id_jstr: JString = env
+                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(0)])?
+                    .l()?
+                    .into();
+                let _doc_id = env.get_string(&doc_id_jstr)?;
 
-            // Add the file to the list
-            let file = from_document_file(&file_obj)?;
-            files.push(file);
+                let filename_jstr: JString = env
+                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(1)])?
+                    .l()?
+                    .into();
+                let filename = env.get_string(&filename_jstr)?.to_string_lossy().into_owned();
+
+                let size = env.call_method(&cursor, "getLong", "(I)J", &[JValueGen::Int(2)])?.j()? as usize;
+
+                let mime_type_jstr: JString = env
+                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(3)])?
+                    .l()?
+                    .into();
+                
+                // Build child URI
+                let child_uri = env
+                    .call_static_method(
+                        documents_contract_class,
+                        "buildDocumentUriUsingTree",
+                        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+                        &[JValueGen::Object(&parent_uri), JValueGen::Object(&doc_id_jstr)],
+                    )?
+                    .l()?;
+
+                // Get path and url from child URI
+                let path_object = env
+                    .call_method(&child_uri, "getPath", "()Ljava/lang/String;", &[])?
+                    .l()?;
+                let path = env
+                    .get_string(&JString::from(path_object))?
+                    .to_string_lossy()
+                    .into_owned();
+                let url = env
+                    .call_method(&child_uri, "toString", "()Ljava/lang/String;", &[])?
+                    .l()
+                    .and_then(|url| {
+                        env.get_string(&JString::from(url))
+                            .map(|s| s.to_string_lossy().into_owned())
+                    })?;
+
+                // Check if it's a directory
+                let is_dir = env.is_same_object(&mime_type_jstr, &mime_type_dir)?;
+
+                // Create DocumentFile object
+                let document_file_class = "androidx/documentfile/provider/DocumentFile";
+                let document_file = env
+                    .call_static_method(
+                        document_file_class,
+                        "fromSingleUri",
+                        "(Landroid/content/Context;Landroid/net/Uri;)Landroidx/documentfile/provider/DocumentFile;",
+                        &[JValueGen::Object(context.as_obj()), JValueGen::Object(&child_uri)],
+                    )?
+                    .l()?;
+                
+                if !document_file.is_null() {
+                    let document_file_ref = env.new_global_ref(&document_file)?;
+                    
+                    files.push(AndroidFile {
+                        filename,
+                        size,
+                        path,
+                        url,
+                        is_dir,
+                        document_file: document_file_ref,
+                    });
+                }
+            }
+            // Close the cursor
+            env.call_method(&cursor, "close", "()V", &[])?.v()?;
         }
+
+        // Sort files by name
+        files.sort_by(|a, b| a.filename.cmp(&b.filename));
 
         Ok(files)
     }

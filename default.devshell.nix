@@ -1,0 +1,75 @@
+{ pkgs, masterPkgs, androidPkgs, androidSdk, rust-bin }:
+
+let
+  pinnedJDK = pkgs.jdk17;
+  ndkVersion = "27.1.12297006";
+  ndkRoot = "${androidSdk}/share/android-sdk/ndk/${ndkVersion}";
+  toolchainPath = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64";
+  sysrootPath = "${toolchainPath}/sysroot";
+  toolchainBinPath = "${toolchainPath}/bin";
+  cmakeToolchainFile = "${ndkRoot}/build/cmake/android.toolchain.cmake";
+in
+pkgs.mkShell {
+  name = "Rust SAF Development Shell";
+
+  buildInputs = with pkgs; [
+    (rust-bin.stable.latest.default.override {
+      extensions = [ "rust-src" ];
+      targets = [ "armv7-linux-androideabi" "aarch64-linux-android" "i686-linux-android" "x86_64-linux-android" ];
+    })
+    yq
+    openssl
+    pkg-config
+    stdenv
+    clippy
+    rust-analyzer
+    rustup
+    masterPkgs.flutter
+    android-studio
+    androidSdk
+    pinnedJDK
+    clang
+    cmake
+    pcre2
+    ninja
+    unzip
+    wayland
+    eza
+    fd
+    gtk3
+    fontconfig
+    mesa
+    zstd.dev
+    sqlite.dev
+    util-linux.dev
+    libsysprof-capture
+    libayatana-appindicator
+  ];
+
+  env = {
+    JAVA_HOME = "${pinnedJDK}";
+    ANDROID_HOME = "${androidSdk}/share/android-sdk";
+    RUST_BACKTRACE = 1;
+    ANDROID_NDK_PATH = "${ndkRoot}";
+    NIX_NIX_DEV_SHELL = "true";
+    NIX_ANDROID_NDK_ROOT = "${ndkRoot}";
+    NIX_CFLAGS = "-I${sysrootPath}/usr/include";
+    NIX_CXXFLAGS = "-I${sysrootPath}/usr/include/c++/v1";
+    NIX_BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${sysrootPath}";
+    NIX_RUSTFLAGS = "-Clink-arg=--sysroot=${sysrootPath}";
+    NIX_CMAKE_TOOLCHAIN_FILE = cmakeToolchainFile;
+    NIX_TOOLCHAIN_BIN_PATH = toolchainPath;
+    NIX_ANDROID_SDK = androidSdk;
+    NIX_PINNED_JDK = pinnedJDK;
+    CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "${toolchainBinPath}/aarch64-linux-android34-clang";
+    CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = "${toolchainBinPath}/armv7a-linux-androideabi34-clang";
+    CARGO_TARGET_I686_LINUX_ANDROID_LINKER = "${toolchainBinPath}/i686-linux-android34-clang";
+    CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${toolchainBinPath}/x86_64-linux-android34-clang";
+  };
+
+  shellHook = ''
+    alias ls=exa
+    alias find=fd
+    export PATH=$HOME/.cargo/bin:$HOME/.pub-cache/bin:$PATH
+  '';
+}
