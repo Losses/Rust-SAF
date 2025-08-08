@@ -61,6 +61,10 @@ pkgs.mkShell {
     NIX_TOOLCHAIN_BIN_PATH = toolchainPath;
     NIX_ANDROID_SDK = androidSdk;
     NIX_PINNED_JDK = pinnedJDK;
+    CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "${toolchainBinPath}/aarch64-linux-android34-clang";
+    CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = "${toolchainBinPath}/armv7a-linux-androideabi34-clang";
+    CARGO_TARGET_I686_LINUX_ANDROID_LINKER = "${toolchainBinPath}/i686-linux-android34-clang";
+    CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${toolchainBinPath}/x86_64-linux-android34-clang";
   };
 
   shellHook = ''
