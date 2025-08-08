@@ -360,7 +360,9 @@ impl AndroidFileOps for AndroidFile {
                     })?;
 
                 // Check if it's a directory
-                let is_dir = env.is_same_object(&mime_type_jstr, &mime_type_dir)?;
+                let is_dir = env
+                    .call_method(&mime_type_jstr, "equals", "(Ljava/lang/Object;)Z", &[JValueGen::Object(&mime_type_dir)])?
+                    .z()?;
 
                 // Create DocumentFile object
                 let document_file_class = "androidx/documentfile/provider/DocumentFile";
