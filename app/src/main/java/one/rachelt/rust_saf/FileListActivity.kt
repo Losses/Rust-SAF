@@ -12,8 +12,6 @@ import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
-import androidx.core.net.toUri
-import androidx.documentfile.provider.TreeDocumentFileWrapper
 
 class FileListActivity : AppCompatActivity() {
     companion object {
@@ -34,7 +32,7 @@ class FileListActivity : AppCompatActivity() {
             finish()
             return
         }
-        val documentFile = TreeDocumentFileWrapper.fromTreeUri(this, folderUri)
+        val documentFile = createTreeDocumentFile(this, folderUri)
         if (documentFile == null) {
             finish()
             return
@@ -49,6 +47,34 @@ class FileListActivity : AppCompatActivity() {
         }
         listView.adapter = FileListAdapter(this, files)
     }
+
+    /**
+     * Creates a DocumentFile from a URI.
+     * Since `fromTreeUri` does not work with child URIs, we need to use reflection
+     * to create a TreeDocumentFile instance directly.
+     * This is a workaround for the limitation of DocumentFile API.
+     */
+    private fun createTreeDocumentFile(context: Context, uri: Uri): DocumentFile? {
+        // First, try to get the parent DocumentFile, and if the URI points to root directory,
+        // we return the parent document file directly.
+        // Here we check whether the URI from DocumentFile starts with the URI passed in, because
+        // the former contains some extra information like the document type.
+        val parent = DocumentFile.fromTreeUri(context, uri)
+        if (parent?.uri.toString().startsWith(uri.toString())) {
+            return parent
+        }
+
+        // Otherwise, we use reflection to create a TreeDocumentFile instance.
+        val treeDocumentFileClass = Class.forName("androidx.documentfile.provider.TreeDocumentFile")
+        val constructor = treeDocumentFileClass.getDeclaredConstructor(
+            DocumentFile::class.java,  // parent
+            Context::class.java,       // context
+            Uri::class.java            // uri
+        )
+        constructor.isAccessible = true
+        return constructor.newInstance(parent, context, uri) as DocumentFile
+    }
+
 
     private class FileListAdapter(
         private val context: Context,
