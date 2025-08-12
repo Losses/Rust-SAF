@@ -48,7 +48,7 @@ pub extern "system" fn JNI_OnLoad(vm: *mut JavaVM, _: *mut c_void) -> jint {
             panic_info
                 .payload()
                 .downcast_ref::<&str>()
-                .map(|s| *s)
+                .copied()
                 .unwrap_or("<cause unknown>")
         });
 
