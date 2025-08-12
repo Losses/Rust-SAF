@@ -146,6 +146,16 @@ pub extern "system" fn Java_one_rachelt_rust_1saf_MainActivity_listUriFiles(
     file.read_to_string(&mut content)
         .expect("Couldn't read file!");
     info!("Content: {:?}", content);
+
+    // Check if the file can be converted to and back from uri
+    let created_uri = created.url;
+    info!("Getting created file URI: {:?}", created_uri);
+    let created_from_uri = ndk_saf::from_tree_url(&created_uri)
+        .expect("Couldn't convert uri to file info!");
+    info!("Constructing from URI again, this time URI: {:?}", created_from_uri.url);
+    // Check if the uri is the same
+    info!("Is the URI the same? {}", created_from_uri.url == created_uri);
+
     // List files in the created directory
     let files = created_dir.list_files().expect("Couldn't list files!");
     info!("Files: {:?}", files);
