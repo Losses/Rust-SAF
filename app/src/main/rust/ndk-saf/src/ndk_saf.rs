@@ -68,15 +68,56 @@ pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
         )?
         .l()?;
 
-    // From the documentation of "fromTreeUri", all URIs obtained from OPEN_DOCUMENT_TREE SHOULD ONLY
-    // be used with this method. Otherwise, you will get some very unexpected and annoying results.
+    // Get the parent DocumentFile
     let document_file_class = "androidx/documentfile/provider/DocumentFile";
-    let document_file = env.call_static_method(
+    let parent = env.call_static_method(
         &document_file_class,
         "fromTreeUri",
         "(Landroid/content/Context;Landroid/net/Uri;)Landroidx/documentfile/provider/DocumentFile;",
         &[JValueGen::Object(context.as_obj()), JValueGen::Object(&uri)],
     )?.l()?;
+
+    // Check if parent URI starts with the input URI, in which case we can use the parent directly.
+    let parent_uri = env.call_method(
+        &parent,
+        "getUri",
+        "()Landroid/net/Uri;",
+        &[],
+    )?.l()?;
+
+    let parent_uri_str = env.call_method(
+        &parent_uri,
+        "toString",
+        "()Ljava/lang/String;",
+        &[],
+    )?.l()?;
+
+    let input_uri_str = env.call_method(
+        &uri,
+        "toString",
+        "()Ljava/lang/String;",
+        &[],
+    )?.l()?;
+
+    let parent_str: String = env.get_string(&parent_uri_str.into())?.into();
+    let input_str: String = env.get_string(&input_uri_str.into())?.into();
+
+    if parent_str.starts_with(&input_str) {
+        return Ok(from_document_file(&parent)?);
+    }
+
+    // Otherwise, we create a TreeDocumentFile pointing to child file.
+    let tree_document_file_class = env.find_class("androidx/documentfile/provider/TreeDocumentFile")?;
+    let document_file = env.new_object(
+        tree_document_file_class,
+        "(Landroidx/documentfile/provider/DocumentFile;Landroid/content/Context;Landroid/net/Uri;)V",
+        &[
+            JValueGen::Object(&parent),
+            JValueGen::Object(context.as_obj()),
+            JValueGen::Object(&uri),
+        ],
+    )?;
+
     Ok(from_document_file(&document_file)?)
 }
 
