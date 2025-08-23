@@ -1,8 +1,8 @@
+use crate::jni_utils::{find_class, get_env};
 use anyhow::{anyhow, Ok, Result};
 use jni::objects::{GlobalRef, JObject, JString, JValueGen};
 use jni::JNIEnv;
 use log::info;
-use crate::jni_utils::{find_class, get_env};
 use std::fs::File;
 use std::os::fd::FromRawFd;
 use std::os::unix::io::RawFd;
@@ -77,26 +77,17 @@ pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
     )?.l()?;
 
     // Check if parent URI starts with the input URI, in which case we can use the parent directly.
-    let parent_uri = env.call_method(
-        &parent,
-        "getUri",
-        "()Landroid/net/Uri;",
-        &[],
-    )?.l()?;
+    let parent_uri = env
+        .call_method(&parent, "getUri", "()Landroid/net/Uri;", &[])?
+        .l()?;
 
-    let parent_uri_str = env.call_method(
-        &parent_uri,
-        "toString",
-        "()Ljava/lang/String;",
-        &[],
-    )?.l()?;
+    let parent_uri_str = env
+        .call_method(&parent_uri, "toString", "()Ljava/lang/String;", &[])?
+        .l()?;
 
-    let input_uri_str = env.call_method(
-        &uri,
-        "toString",
-        "()Ljava/lang/String;",
-        &[],
-    )?.l()?;
+    let input_uri_str = env
+        .call_method(&uri, "toString", "()Ljava/lang/String;", &[])?
+        .l()?;
 
     let parent_str: String = env.get_string(&parent_uri_str.into())?.into();
     let input_str: String = env.get_string(&input_uri_str.into())?.into();
@@ -230,7 +221,7 @@ pub fn open_content_url(url: &str, open_mode: &str) -> Result<File> {
     if fd < 0 {
         return Err(anyhow!("Invalid file descriptor: {}", fd));
     }
-    
+
     // Create a new file from the validated file descriptor
     let file = unsafe { File::from_raw_fd(fd) };
     Ok(file)

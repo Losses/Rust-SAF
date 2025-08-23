@@ -1,5 +1,7 @@
-mod ndk_saf;
 mod jni_utils;
+mod ndk_saf;
 
-pub use ndk_saf::{from_document_file, from_tree_url, AndroidFile, AndroidFileOps, open_content_url};
-pub use jni_utils::{find_class, get_env, initialize_class_loader, cleanup_class_loader};
+pub use jni_utils::{cleanup_class_loader, find_class, get_env, initialize_class_loader};
+pub use ndk_saf::{
+    from_document_file, from_tree_url, open_content_url, AndroidFile, AndroidFileOps,
+};

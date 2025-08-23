@@ -59,7 +59,7 @@ pub extern "system" fn JNI_OnLoad(vm: *mut JavaVM, _: *mut c_void) -> jint {
         INIT.call_once(|| unsafe {
             // Convert *mut JavaVM to *mut c_void and store it
             JVM = Some(vm as *mut c_void);
-            
+
             // Initialize ClassLoader for proper class finding from non-main threads
             let java_vm = JavaVM::from_raw(vm as *mut jni::sys::JavaVM).unwrap();
             if let Ok(mut env) = java_vm.get_env() {
@@ -162,11 +162,17 @@ pub extern "system" fn Java_one_rachelt_rust_1saf_MainActivity_listUriFiles(
     // Check if the file can be converted to and back from uri
     let created_uri = created.url;
     info!("Getting created file URI: {:?}", created_uri);
-    let created_from_uri = ndk_saf::from_tree_url(&created_uri)
-        .expect("Couldn't convert uri to file info!");
-    info!("Constructing from URI again, this time URI: {:?}", created_from_uri.url);
+    let created_from_uri =
+        ndk_saf::from_tree_url(&created_uri).expect("Couldn't convert uri to file info!");
+    info!(
+        "Constructing from URI again, this time URI: {:?}",
+        created_from_uri.url
+    );
     // Check if the uri is the same
-    info!("Is the URI the same? {}", created_from_uri.url == created_uri);
+    info!(
+        "Is the URI the same? {}",
+        created_from_uri.url == created_uri
+    );
 
     // List files in the created directory
     let files = created_dir.list_files().expect("Couldn't list files!");
