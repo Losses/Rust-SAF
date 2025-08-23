@@ -2,7 +2,7 @@ use anyhow::{anyhow, Ok, Result};
 use jni::objects::{GlobalRef, JObject, JString, JValueGen};
 use jni::JNIEnv;
 use log::info;
-use ndk_context::android_context;
+use crate::jni_utils::{find_class, get_env};
 use std::fs::File;
 use std::os::fd::FromRawFd;
 use std::os::unix::io::RawFd;
@@ -28,10 +28,10 @@ pub trait AndroidFileOps {
 }
 
 fn get_global_context(env: &mut JNIEnv) -> Result<GlobalRef> {
-    let activity_thread = env.find_class("android/app/ActivityThread")?;
+    let activity_thread = find_class("android/app/ActivityThread")?;
     let current_activity_thread = env
         .call_static_method(
-            activity_thread,
+            &activity_thread,
             "currentActivityThread",
             "()Landroid/app/ActivityThread;",
             &[],
@@ -51,10 +51,9 @@ fn get_global_context(env: &mut JNIEnv) -> Result<GlobalRef> {
 /// Create an AndroidFile object from a content tree URL obtained from Storage Access Framework (SAF).
 pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
     info!("Creating AndroidFile object from URL: {}", url);
-    // Obtain JNIEnv
-    let ctx = android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
+    // Obtain JNIEnv using improved get_env function
+    let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
     let context = get_global_context(&mut env)?;
 
     // Convert Rust string to Java string, and parse it as a URI
@@ -107,7 +106,7 @@ pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
     }
 
     // Otherwise, we create a TreeDocumentFile pointing to child file.
-    let tree_document_file_class = env.find_class("androidx/documentfile/provider/TreeDocumentFile")?;
+    let tree_document_file_class = find_class("androidx/documentfile/provider/TreeDocumentFile")?;
     let document_file = env.new_object(
         tree_document_file_class,
         "(Landroidx/documentfile/provider/DocumentFile;Landroid/content/Context;Landroid/net/Uri;)V",
@@ -132,10 +131,9 @@ pub fn from_document_file(document_file: &JObject) -> Result<AndroidFile> {
         return Err(anyhow!("The provided DocumentFile object is null"));
     }
 
-    // Obtain JNIEnv
-    let ctx = android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
+    // Obtain JNIEnv using improved get_env function
+    let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
 
     // Obtain file name
     let filename = env
@@ -190,10 +188,9 @@ pub fn from_document_file(document_file: &JObject) -> Result<AndroidFile> {
 pub fn open_content_url(url: &str, open_mode: &str) -> Result<File> {
     info!("Opening file url: {}, with mode: {}", url, open_mode);
 
-    // Obtain JNIEnv and Context
-    let ctx = android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
+    // Obtain JNIEnv and Context using improved get_env function
+    let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
     let context = get_global_context(&mut env)?;
 
     // Get ContentResolver object from Context
@@ -261,10 +258,9 @@ impl AndroidFileOps for AndroidFile {
         }
         info!("Listing files in directory: {}", self.url);
 
-        // Obtain JNIEnv
-        let ctx = android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast())? };
-        let mut env = vm.attach_current_thread()?;
+        // Obtain JNIEnv using improved get_env function
+        let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
         let context = get_global_context(&mut env)?;
 
         // Get ContentResolver
@@ -490,10 +486,9 @@ impl AndroidFileOps for AndroidFile {
             file_name, mime_type, self.url
         );
 
-        // Obtain JNIEnv
-        let ctx = android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-        let mut env = vm.attach_current_thread()?;
+        // Obtain JNIEnv using improved get_env function
+        let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
 
         // Convert MIME type and file name to Java strings
         let mime_type_str = env.new_string(mime_type)?;
@@ -524,10 +519,9 @@ impl AndroidFileOps for AndroidFile {
             dir_name, self.url
         );
 
-        // Obtain JNIEnv
-        let ctx = android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-        let mut env = vm.attach_current_thread()?;
+        // Obtain JNIEnv using improved get_env function
+        let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
 
         // Convert directory name to Java string
         let file_name_str = env.new_string(dir_name)?;
@@ -549,10 +543,9 @@ impl AndroidFileOps for AndroidFile {
     /// a directory, the directory will be removed recursively. The method will return true if the
     /// file or directory is removed successfully, or false if the file or directory does not exist.
     fn remove_file(&self) -> Result<bool> {
-        // Obtain JNIEnv
-        let ctx = android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-        let mut env = vm.attach_current_thread()?;
+        // Obtain JNIEnv using improved get_env function
+        let env_guard = get_env()?;
+    let mut env = &mut *env_guard;
 
         // Delete the file or directory
         let result = env

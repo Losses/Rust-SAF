@@ -55,11 +55,22 @@ pub extern "system" fn JNI_OnLoad(vm: *mut JavaVM, _: *mut c_void) -> jint {
         error!("A panic occurred at {}:{}: {}", filename, line, cause);
     }));
     catch_unwind(|| {
-        // Safely init JVM
+        // Safely init JVM and ClassLoader
         INIT.call_once(|| unsafe {
             // Convert *mut JavaVM to *mut c_void and store it
             JVM = Some(vm as *mut c_void);
-            info!("JNI_OnLoad called and JVM initialized");
+            
+            // Initialize ClassLoader for proper class finding from non-main threads
+            let java_vm = JavaVM::from_raw(vm as *mut jni::sys::JavaVM).unwrap();
+            if let Ok(mut env) = java_vm.get_env() {
+                if let Err(e) = ndk_saf::initialize_class_loader(vm, &mut env) {
+                    error!("JNI_OnLoad: Failed to setup ClassLoader: {:?}", e);
+                } else {
+                    info!("JNI_OnLoad: JVM and ClassLoader initialized successfully");
+                }
+            } else {
+                error!("JNI_OnLoad: Failed to get JNI environment");
+            }
         });
         JNI_VERSION_1_6
     })
@@ -92,6 +103,7 @@ pub extern "system" fn Java_one_rachelt_rust_1saf_MainActivity_releaseContext(
     unsafe {
         release_android_context();
     }
+    ndk_saf::cleanup_class_loader();
     info!("JNI Context released");
 }
 
