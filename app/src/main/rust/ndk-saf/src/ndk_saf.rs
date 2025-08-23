@@ -226,7 +226,12 @@ pub fn open_content_url(url: &str, open_mode: &str) -> Result<File> {
         .l()?;
     let fd = env.call_method(parcel_fd, "detachFd", "()I", &[])?.i()? as RawFd;
 
-    // Create a new file from the file descriptor
+    // Validate file descriptor before creating File object
+    if fd < 0 {
+        return Err(anyhow!("Invalid file descriptor: {}", fd));
+    }
+    
+    // Create a new file from the validated file descriptor
     let file = unsafe { File::from_raw_fd(fd) };
     Ok(file)
 }
