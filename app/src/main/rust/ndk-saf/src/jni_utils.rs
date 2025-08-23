@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::{AtomicPtr, Ordering},
-    Once, RwLock,
-};
+use std::sync::{Once, RwLock};
 
 use jni::{
     objects::{GlobalRef, JClass, JMethodID},
@@ -13,23 +10,13 @@ use log::{error, info};
 static INIT: Once = Once::new();
 static CLASS_LOADER: RwLock<Option<GlobalRef>> = RwLock::new(None);
 static FIND_CLASS_METHOD: RwLock<Option<JMethodID>> = RwLock::new(None);
-static JVM: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Initialize the ClassLoader cache with the correct ClassLoader
 pub fn initialize_class_loader(
-    vm: *mut JavaVM,
+    _vm: *mut JavaVM,
     env: &mut JNIEnv,
 ) -> Result<(), jni::errors::Error> {
     INIT.call_once(|| {
-        // Validate JVM pointer
-        if vm.is_null() {
-            error!("JVM pointer is null");
-            return;
-        }
-
-        // Store JVM pointer safely
-        JVM.store(vm as *mut std::ffi::c_void, Ordering::SeqCst);
-
         // Setup ClassLoader for proper class finding from non-main threads
         match setup_class_loader(env) {
             Ok((class_loader, find_class_method)) => {
@@ -85,17 +72,10 @@ fn setup_class_loader(env: &mut JNIEnv) -> Result<(GlobalRef, JMethodID), jni::e
 /// Improved getEnv function that handles thread attachment properly
 pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
     use ndk_context::android_context;
-
-    // First try to use the stored JVM if available
-    let stored_jvm = JVM.load(Ordering::SeqCst);
-    if !stored_jvm.is_null() {
-        let vm = unsafe { &*(stored_jvm as *const jni::JavaVM) };
-        return vm.attach_current_thread();
-    }
-
-    // Fallback to android context
+    
+    // Always use android context for reliable JVM access
     let ctx = android_context();
-
+    
     // Validate VM pointer before casting
     let vm_ptr = ctx.vm() as *const jni::sys::JavaVM;
     if vm_ptr.is_null() {
@@ -103,7 +83,7 @@ pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
             "JavaVM pointer from android_context is null",
         ));
     }
-
+    
     // Safe cast to JavaVM
     let vm = unsafe { &*(vm_ptr as *const jni::JavaVM) };
     vm.attach_current_thread()
@@ -149,8 +129,6 @@ pub fn cleanup_class_loader() {
     if let Ok(mut find_class_method_lock) = FIND_CLASS_METHOD.write() {
         *find_class_method_lock = None;
     }
-
-    JVM.store(std::ptr::null_mut(), Ordering::SeqCst);
 
     info!("ClassLoader cleanup completed");
 }
