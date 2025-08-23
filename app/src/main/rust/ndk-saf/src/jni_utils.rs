@@ -73,14 +73,15 @@ fn setup_class_loader(env: &mut JNIEnv) -> Result<(GlobalRef, JMethodID), jni::e
 pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
     use ndk_context::android_context;
     let ctx = android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
+    // Use the VM from the android context directly
+    let vm = unsafe { &*(ctx.vm() as *const jni::sys::JavaVM as *const jni::JavaVM) };
     vm.attach_current_thread()
 }
 
 /// Generic class finding function that uses the cached ClassLoader
 pub fn find_class(class_name: &str) -> Result<JClass, jni::errors::Error> {
-    let env_guard = get_env()?;
-    let mut env = &mut *env_guard;
+    let mut env_guard = get_env()?;
+    let env = &mut *env_guard;
     
     unsafe {
         match (&CLASS_LOADER, &FIND_CLASS_METHOD) {
