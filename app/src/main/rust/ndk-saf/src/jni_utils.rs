@@ -6,17 +6,35 @@ use jni::{
 };
 use log::{error, info};
 
-// Thread-safe global state for ClassLoader caching
+// Thread-safe global state for ClassLoader caching and JavaVM storage
 static INIT: Once = Once::new();
 static CLASS_LOADER: RwLock<Option<GlobalRef>> = RwLock::new(None);
 static FIND_CLASS_METHOD: RwLock<Option<JMethodID>> = RwLock::new(None);
+static JVM: RwLock<Option<&'static JavaVM>> = RwLock::new(None);
 
 /// Initialize the ClassLoader cache with the correct ClassLoader
 pub fn initialize_class_loader(
-    _vm: *mut JavaVM,
+    vm: *mut JavaVM,
     env: &mut JNIEnv,
 ) -> Result<(), jni::errors::Error> {
     INIT.call_once(|| {
+        // Store the JavaVM for later use
+        if let Ok(mut jvm_lock) = JVM.write() {
+            match unsafe { JavaVM::from_raw(vm as *mut jni::sys::JavaVM) } {
+                Ok(java_vm) => {
+                    // Leak the JavaVM to get a 'static reference
+                    let static_vm = Box::leak(Box::new(java_vm));
+                    *jvm_lock = Some(static_vm);
+                    info!("JavaVM stored successfully");
+                }
+                Err(e) => {
+                    error!("Failed to create JavaVM from raw pointer: {:?}", e);
+                }
+            }
+        } else {
+            error!("Failed to acquire JavaVM write lock");
+        }
+
         // Setup ClassLoader for proper class finding from non-main threads
         match setup_class_loader(env) {
             Ok((class_loader, find_class_method)) => {
@@ -69,34 +87,22 @@ fn setup_class_loader(env: &mut JNIEnv) -> Result<(GlobalRef, JMethodID), jni::e
     Ok((class_loader, find_class_method))
 }
 
-/// Improved getEnv function that handles thread attachment properly
+/// Improved getEnv function that uses stored JavaVM from JNI_OnLoad
 pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
-    use ndk_context::android_context;
+    // Use the stored JavaVM from initialize_class_loader
+    let jvm_lock = JVM.read().map_err(|_| {
+        jni::errors::Error::NullPtr("Failed to acquire JavaVM read lock")
+    })?;
     
-    // Always use android context for reliable JVM access
-    let ctx = android_context();
-    
-    // Validate VM pointer before casting
-    let vm_ptr = ctx.vm() as *const jni::sys::JavaVM;
-    if vm_ptr.is_null() {
-        return Err(jni::errors::Error::NullPtr(
-            "JavaVM pointer from android_context is null",
-        ));
-    }
-    
-    // Safe cast to JavaVM with additional validation
-    let vm = unsafe { 
-        // Double-check the pointer validity before dereferencing
-        if (vm_ptr as *const u8).is_null() {
-            return Err(jni::errors::Error::NullPtr(
-                "JavaVM pointer validation failed",
-            ));
-        }
-        &*(vm_ptr as *const jni::JavaVM) 
-    };
+    let java_vm = jvm_lock.as_ref()
+        .ok_or_else(|| {
+            jni::errors::Error::NullPtr(
+                "JavaVM not initialized via JNI_OnLoad - ensure initialize_class_loader was called",
+            )
+        })?;
     
     // Attach current thread with error handling
-    match vm.attach_current_thread() {
+    match java_vm.attach_current_thread() {
         Ok(guard) => Ok(guard),
         Err(e) => {
             error!("Failed to attach current thread: {:?}", e);
@@ -133,7 +139,7 @@ pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     }
 }
 
-/// Cleanup function for global references (call when library unloads)
+/// Cleanup function for global references and JavaVM (call when library unloads)
 pub fn cleanup_class_loader() {
     // Safely acquire write locks and cleanup
     if let Ok(mut class_loader_lock) = CLASS_LOADER.write() {
@@ -146,15 +152,20 @@ pub fn cleanup_class_loader() {
         *find_class_method_lock = None;
     }
 
-    info!("ClassLoader cleanup completed");
+    // Cleanup JavaVM reference (note: leaked memory won't be reclaimed)
+    if let Ok(mut jvm_lock) = JVM.write() {
+        *jvm_lock = None;
+    }
+
+    info!("ClassLoader and JavaVM cleanup completed");
 }
 
-/// Check if ClassLoader is properly initialized
+/// Check if ClassLoader and JavaVM are properly initialized
 pub fn is_class_loader_initialized() -> bool {
-    if let (Ok(class_loader_lock), Ok(find_class_method_lock)) =
-        (CLASS_LOADER.read(), FIND_CLASS_METHOD.read())
+    if let (Ok(class_loader_lock), Ok(find_class_method_lock), Ok(jvm_lock)) =
+        (CLASS_LOADER.read(), FIND_CLASS_METHOD.read(), JVM.read())
     {
-        class_loader_lock.is_some() && find_class_method_lock.is_some()
+        class_loader_lock.is_some() && find_class_method_lock.is_some() && jvm_lock.is_some()
     } else {
         false
     }
