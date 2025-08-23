@@ -1,11 +1,15 @@
+use std::{
+    fs::File,
+    os::{fd::FromRawFd, unix::io::RawFd},
+};
+
 use crate::jni_utils::{find_class, get_env};
 use anyhow::{anyhow, Ok, Result};
-use jni::objects::{GlobalRef, JObject, JString, JValueGen};
-use jni::JNIEnv;
+use jni::{
+    objects::{GlobalRef, JObject, JString, JValueGen},
+    JNIEnv,
+};
 use log::info;
-use std::fs::File;
-use std::os::fd::FromRawFd;
-use std::os::unix::io::RawFd;
 
 // Android File struct definition
 #[derive(Debug, Clone)]
