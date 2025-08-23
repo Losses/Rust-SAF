@@ -79,12 +79,14 @@ pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
 }
 
 /// Generic class finding function that uses the cached ClassLoader
-pub fn find_class(class_name: &str) -> Result<JClass, jni::errors::Error> {
+pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     let mut env_guard = get_env()?;
     let env = &mut *env_guard;
     
     unsafe {
-        match (&CLASS_LOADER, &FIND_CLASS_METHOD) {
+        let class_loader_ptr = &raw const CLASS_LOADER;
+        let find_class_method_ptr = &raw const FIND_CLASS_METHOD;
+        match ((*class_loader_ptr).as_ref(), (*find_class_method_ptr).as_ref()) {
             (Some(class_loader), Some(find_class_method)) => {
                 let class_name_jstring = env.new_string(class_name)?;
                 let result = env.call_method_unchecked(
@@ -106,11 +108,14 @@ pub fn find_class(class_name: &str) -> Result<JClass, jni::errors::Error> {
 /// Cleanup function for global references (call when library unloads)
 pub fn cleanup_class_loader() {
     unsafe {
-        if let Some(_class_loader) = CLASS_LOADER.take() {
+        let class_loader_ptr = &raw mut CLASS_LOADER;
+        if let Some(_class_loader) = (*class_loader_ptr).take() {
             // Global references are automatically cleaned up when dropped
         }
-        FIND_CLASS_METHOD = None;
-        JVM = None;
+        let find_class_method_ptr = &raw mut FIND_CLASS_METHOD;
+        *find_class_method_ptr = None;
+        let jvm_ptr = &raw mut JVM;
+        *jvm_ptr = None;
         info!("ClassLoader cleanup completed");
     }
 }
