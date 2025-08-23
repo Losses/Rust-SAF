@@ -1,11 +1,13 @@
+use std::sync::{
+    atomic::{AtomicPtr, Ordering},
+    Once, RwLock,
+};
+
 use jni::{
     objects::{GlobalRef, JClass, JMethodID},
     AttachGuard, JNIEnv, JavaVM,
 };
 use log::{error, info};
-use std::sync::{Once, RwLock};
-
-use std::sync::atomic::{AtomicPtr, Ordering};
 
 // Thread-safe global state for ClassLoader caching
 static INIT: Once = Once::new();
@@ -83,12 +85,23 @@ fn setup_class_loader(env: &mut JNIEnv) -> Result<(GlobalRef, JMethodID), jni::e
 /// Improved getEnv function that handles thread attachment properly
 pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
     use ndk_context::android_context;
+
+    // First try to use the stored JVM if available
+    let stored_jvm = JVM.load(Ordering::SeqCst);
+    if !stored_jvm.is_null() {
+        let vm = unsafe { &*(stored_jvm as *const jni::JavaVM) };
+        return vm.attach_current_thread();
+    }
+
+    // Fallback to android context
     let ctx = android_context();
 
     // Validate VM pointer before casting
     let vm_ptr = ctx.vm() as *const jni::sys::JavaVM;
     if vm_ptr.is_null() {
-        return Err(jni::errors::Error::NullPtr("JavaVM pointer is null"));
+        return Err(jni::errors::Error::NullPtr(
+            "JavaVM pointer from android_context is null",
+        ));
     }
 
     // Safe cast to JavaVM
@@ -102,24 +115,21 @@ pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     let env = &mut *env_guard;
 
     // Try to acquire read locks safely
-    if let (Ok(class_loader_lock), Ok(find_class_method_lock)) =
+    if let (Ok(class_loader_lock), Ok(_find_class_method_lock)) =
         (CLASS_LOADER.read(), FIND_CLASS_METHOD.read())
     {
-        match (class_loader_lock.as_ref(), find_class_method_lock.as_ref()) {
-            (Some(class_loader), Some(_find_class_method)) => {
-                let class_name_jstring = env.new_string(class_name)?;
-                let result = env.call_method(
-                    class_loader.as_obj(),
-                    "findClass",
-                    "(Ljava/lang/String;)Ljava/lang/Class;",
-                    &[(&class_name_jstring).into()],
-                )?;
-                Ok(JClass::from(result.l()?))
-            }
-            _ => {
-                // Fallback to standard FindClass if ClassLoader not initialized
-                env.find_class(class_name)
-            }
+        if let Some(class_loader) = class_loader_lock.as_ref() {
+            let class_name_jstring = env.new_string(class_name)?;
+            let result = env.call_method(
+                class_loader.as_obj(),
+                "findClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[(&class_name_jstring).into()],
+            )?;
+            Ok(JClass::from(result.l()?))
+        } else {
+            // Fallback to standard FindClass if ClassLoader not initialized
+            env.find_class(class_name)
         }
     } else {
         // Fallback to standard FindClass if locks cannot be acquired
@@ -143,4 +153,15 @@ pub fn cleanup_class_loader() {
     JVM.store(std::ptr::null_mut(), Ordering::SeqCst);
 
     info!("ClassLoader cleanup completed");
+}
+
+/// Check if ClassLoader is properly initialized
+pub fn is_class_loader_initialized() -> bool {
+    if let (Ok(class_loader_lock), Ok(find_class_method_lock)) =
+        (CLASS_LOADER.read(), FIND_CLASS_METHOD.read())
+    {
+        class_loader_lock.is_some() && find_class_method_lock.is_some()
+    } else {
+        false
+    }
 }
