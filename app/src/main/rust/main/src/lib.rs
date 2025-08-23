@@ -100,10 +100,15 @@ pub extern "system" fn Java_one_rachelt_rust_1saf_MainActivity_releaseContext(
     _env: *mut jni::JNIEnv,
     _class: jni::objects::JClass,
 ) {
-    unsafe {
-        release_android_context();
+    // Add error handling to prevent race conditions during context release
+    if let Err(e) = catch_unwind(|| {
+        unsafe {
+            release_android_context();
+        }
+        ndk_saf::cleanup_class_loader();
+    }) {
+        error!("Error during context release: {:?}", e);
     }
-    ndk_saf::cleanup_class_loader();
     info!("JNI Context released");
 }
 
@@ -113,15 +118,12 @@ pub fn get_jvm() -> Option<*mut c_void> {
 
 #[no_mangle]
 pub extern "system" fn Java_one_rachelt_rust_1saf_MainActivity_listUriFiles(
-    _env: *mut jni::JNIEnv,
+    env: *mut jni::JNIEnv,
     _class: jni::objects::JClass,
     uri: jni::objects::JString,
 ) {
-    let vm = get_jvm()
-        .map(|jvm| unsafe { JavaVM::from_raw(jvm.cast()) })
-        .expect("Couldn't get JVM!")
-        .unwrap();
-    let mut env = vm.attach_current_thread().expect("Couldn't attach thread!");
+    // Use the JNIEnv passed from Java instead of creating a new thread attachment
+    let env = unsafe { &mut *env };
     let uri_str: String = env
         .get_string(&uri)
         .expect("Couldn't get java string!")

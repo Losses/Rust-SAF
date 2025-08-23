@@ -84,9 +84,25 @@ pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
         ));
     }
     
-    // Safe cast to JavaVM
-    let vm = unsafe { &*(vm_ptr as *const jni::JavaVM) };
-    vm.attach_current_thread()
+    // Safe cast to JavaVM with additional validation
+    let vm = unsafe { 
+        // Double-check the pointer validity before dereferencing
+        if (vm_ptr as *const u8).is_null() {
+            return Err(jni::errors::Error::NullPtr(
+                "JavaVM pointer validation failed",
+            ));
+        }
+        &*(vm_ptr as *const jni::JavaVM) 
+    };
+    
+    // Attach current thread with error handling
+    match vm.attach_current_thread() {
+        Ok(guard) => Ok(guard),
+        Err(e) => {
+            error!("Failed to attach current thread: {:?}", e);
+            Err(e)
+        }
+    }
 }
 
 /// Generic class finding function that uses the cached ClassLoader
