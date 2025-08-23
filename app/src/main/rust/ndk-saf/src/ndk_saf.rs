@@ -147,7 +147,7 @@ pub fn from_document_file(document_file: &JObject) -> Result<AndroidFile> {
         })?;
 
     // Obtain file size
-    let size = env.call_method(&document_file, "length", "()J", &[])?.j()? as usize;
+    let size = env.call_method(document_file, "length", "()J", &[])?.j()? as usize;
 
     // Obtain file path and url
     let uri = env
@@ -169,7 +169,7 @@ pub fn from_document_file(document_file: &JObject) -> Result<AndroidFile> {
 
     // Check if the URL points to a directory
     let is_dir = env
-        .call_method(&document_file, "isDirectory", "()Z", &[])?
+        .call_method(document_file, "isDirectory", "()Z", &[])?
         .z()
         .unwrap_or(false);
 
@@ -187,13 +187,60 @@ pub fn from_document_file(document_file: &JObject) -> Result<AndroidFile> {
     })
 }
 
+pub fn open_content_url(url: &str, open_mode: &str) -> Result<File> {
+    info!("Opening file url: {}, with mode: {}", url, open_mode);
+
+    // Obtain JNIEnv and Context
+    let ctx = android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let context = get_global_context(&mut env)?;
+
+    // Get ContentResolver object from Context
+    let content_resolver = env
+        .call_method(
+            context,
+            "getContentResolver",
+            "()Landroid/content/ContentResolver;",
+            &[],
+        )?
+        .l()?;
+
+    // Convert URI string to Java Uri object, open mode to Java string
+    let url_str = env.new_string(url)?;
+    let uri = env
+        .call_static_method(
+            "android/net/Uri",
+            "parse",
+            "(Ljava/lang/String;)Landroid/net/Uri;",
+            &[JValueGen::Object(&url_str)],
+        )?
+        .l()?;
+    let mode_str = env.new_string(open_mode)?;
+
+    // Open the file descriptor and detach it
+    let parcel_fd = env
+        .call_method(
+            content_resolver,
+            "openFileDescriptor",
+            "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
+            &[JValueGen::Object(&uri), JValueGen::Object(&mode_str)],
+        )?
+        .l()?;
+    let fd = env.call_method(parcel_fd, "detachFd", "()I", &[])?.i()? as RawFd;
+
+    // Create a new file from the file descriptor
+    let file = unsafe { File::from_raw_fd(fd) };
+    Ok(file)
+}
+
 impl AndroidFileOps for AndroidFile {
     /// Open the file represented by the AndroidFile object with the specified open mode.
     /// The "open_mode" str corresponds to that in Android ContentResolver.openFileDescriptor method,
     /// which can be "r", "w", "wt", "wa", "rw" or "rwt". Please note that there is <b>no</b> standard
     /// behavior for each mode, and the behavior may vary among different Android versions and file
     /// providers. For example, "w" may truncate the file or not, so it is recommended to specify the
-    /// mode explicitly.<br />
+    /// mode explicitly.
     /// Furthermore, "rw" mode requires an on-disk file that supports seeking, while "r" mode and "w"
     /// mode can be used to read or write to a pipe or socket, respectively.
     fn open(&self, open_mode: &str) -> Result<File> {
@@ -201,50 +248,8 @@ impl AndroidFileOps for AndroidFile {
         if self.is_dir {
             return Err(anyhow!("The provided URL points to a directory"));
         }
-        info!("Opening file url: {}, with mode: {}", self.url, open_mode);
 
-        // Obtain JNIEnv and Context
-        let ctx = android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-        let mut env = vm.attach_current_thread()?;
-        let context = get_global_context(&mut env)?;
-
-        // Get ContentResolver object from Context
-        let content_resolver = env
-            .call_method(
-                context,
-                "getContentResolver",
-                "()Landroid/content/ContentResolver;",
-                &[],
-            )?
-            .l()?;
-
-        // Convert URI string to Java Uri object, open mode to Java string
-        let url_str = env.new_string(&self.url)?;
-        let uri = env
-            .call_static_method(
-                "android/net/Uri",
-                "parse",
-                "(Ljava/lang/String;)Landroid/net/Uri;",
-                &[JValueGen::Object(&url_str)],
-            )?
-            .l()?;
-        let mode_str = env.new_string(open_mode)?;
-
-        // Open the file descriptor and detach it
-        let parcel_fd = env
-            .call_method(
-                content_resolver,
-                "openFileDescriptor",
-                "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
-                &[JValueGen::Object(&uri), JValueGen::Object(&mode_str)],
-            )?
-            .l()?;
-        let fd = env.call_method(parcel_fd, "detachFd", "()I", &[])?.i()? as RawFd;
-
-        // Create a new file from the file descriptor
-        let file = unsafe { File::from_raw_fd(fd) };
-        Ok(file)
+        open_content_url(&self.url, open_mode)
     }
 
     /// List files in the directory represented by the AndroidFile object. If the object does not
@@ -356,31 +361,54 @@ impl AndroidFileOps for AndroidFile {
             while env.call_method(&cursor, "moveToNext", "()Z", &[])?.z()? {
                 // Get column values
                 let doc_id_jstr: JString = env
-                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(0)])?
+                    .call_method(
+                        &cursor,
+                        "getString",
+                        "(I)Ljava/lang/String;",
+                        &[JValueGen::Int(0)],
+                    )?
                     .l()?
                     .into();
                 let _doc_id = env.get_string(&doc_id_jstr)?;
 
                 let filename_jstr: JString = env
-                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(1)])?
+                    .call_method(
+                        &cursor,
+                        "getString",
+                        "(I)Ljava/lang/String;",
+                        &[JValueGen::Int(1)],
+                    )?
                     .l()?
                     .into();
-                let filename = env.get_string(&filename_jstr)?.to_string_lossy().into_owned();
+                let filename = env
+                    .get_string(&filename_jstr)?
+                    .to_string_lossy()
+                    .into_owned();
 
-                let size = env.call_method(&cursor, "getLong", "(I)J", &[JValueGen::Int(2)])?.j()? as usize;
+                let size = env
+                    .call_method(&cursor, "getLong", "(I)J", &[JValueGen::Int(2)])?
+                    .j()? as usize;
 
                 let mime_type_jstr: JString = env
-                    .call_method(&cursor, "getString", "(I)Ljava/lang/String;", &[JValueGen::Int(3)])?
+                    .call_method(
+                        &cursor,
+                        "getString",
+                        "(I)Ljava/lang/String;",
+                        &[JValueGen::Int(3)],
+                    )?
                     .l()?
                     .into();
-                
+
                 // Build child URI
                 let child_uri = env
                     .call_static_method(
                         documents_contract_class,
                         "buildDocumentUriUsingTree",
                         "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
-                        &[JValueGen::Object(&parent_uri), JValueGen::Object(&doc_id_jstr)],
+                        &[
+                            JValueGen::Object(&parent_uri),
+                            JValueGen::Object(&doc_id_jstr),
+                        ],
                     )?
                     .l()?;
 
@@ -402,7 +430,12 @@ impl AndroidFileOps for AndroidFile {
 
                 // Check if it's a directory
                 let is_dir = env
-                    .call_method(&mime_type_jstr, "equals", "(Ljava/lang/Object;)Z", &[JValueGen::Object(&mime_type_dir)])?
+                    .call_method(
+                        &mime_type_jstr,
+                        "equals",
+                        "(Ljava/lang/Object;)Z",
+                        &[JValueGen::Object(&mime_type_dir)],
+                    )?
                     .z()?;
 
                 // Create DocumentFile object
@@ -415,10 +448,10 @@ impl AndroidFileOps for AndroidFile {
                         &[JValueGen::Object(context.as_obj()), JValueGen::Object(&child_uri)],
                     )?
                     .l()?;
-                
+
                 if !document_file.is_null() {
                     let document_file_ref = env.new_global_ref(&document_file)?;
-                    
+
                     files.push(AndroidFile {
                         filename,
                         size,
@@ -452,7 +485,10 @@ impl AndroidFileOps for AndroidFile {
         if !self.is_dir {
             return Err(anyhow!("The provided URL does not point to a directory"));
         }
-        info!("Creating file named {} with MIME type {} in directory: {}", file_name, mime_type, self.url);
+        info!(
+            "Creating file named {} with MIME type {} in directory: {}",
+            file_name, mime_type, self.url
+        );
 
         // Obtain JNIEnv
         let ctx = android_context();
@@ -483,7 +519,10 @@ impl AndroidFileOps for AndroidFile {
         if !self.is_dir {
             return Err(anyhow!("The provided URL does not point to a directory"));
         }
-        info!("Creating directory named {} in directory: {}", dir_name, self.url);
+        info!(
+            "Creating directory named {} in directory: {}",
+            dir_name, self.url
+        );
 
         // Obtain JNIEnv
         let ctx = android_context();
