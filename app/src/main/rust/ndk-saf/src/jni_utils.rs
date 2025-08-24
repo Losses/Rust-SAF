@@ -58,8 +58,38 @@ pub fn initialize_class_loader(
 
 /// Setup ClassLoader during initialization to cache for later use
 fn setup_class_loader(env: &mut JNIEnv) -> Result<(GlobalRef, JMethodID), jni::errors::Error> {
+    // Get the Activity Thread object
+    let activity_thread_class = env.find_class("android/app/ActivityThread")?;
+    let activity_thread = env.call_static_method(
+        &activity_thread_class,
+        "currentActivityThread",
+        "()Landroid/app/ActivityThread;",
+        &[],
+    )?;
+
+    // Get the Application object
+    let application = env.call_method(
+        activity_thread.l()?,
+        "getApplication",
+        "()Landroid/app/Application;",
+        &[],
+    )?;
+
+    // Get the package name
+    let package_name_obj = env.call_method(
+        application.l()?,
+        "getPackageName",
+        "()Ljava/lang/String;",
+        &[],
+    )?;
+    let package_name_jstring = jni::objects::JString::from(package_name_obj.l()?);
+    let package_name: String = env.get_string(&package_name_jstring)?.into();
+
+    // Construct the MainActivity class name
+    let main_activity_class_name = format!("{}/MainActivity", package_name.replace('.', "/"));
+
     // Use MainActivity as our reference class to get the correct ClassLoader
-    let main_activity_class = env.find_class("one/rachelt/rust_saf/MainActivity")?;
+    let main_activity_class = env.find_class(&main_activity_class_name)?;
     let class_class = env.get_object_class(&main_activity_class)?;
     let class_loader_class = env.find_class("java/lang/ClassLoader")?;
 
