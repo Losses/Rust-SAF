@@ -71,8 +71,10 @@ pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
         )?
         .l()?;
 
-    // Get the parent DocumentFile
-    let document_file_class = "androidx/documentfile/provider/DocumentFile";
+    // Get the parent DocumentFile. Resolve the class through the cached app
+    // ClassLoader: a bare FindClass from a Rust-spawned thread uses the boot
+    // classloader, which cannot see androidx classes.
+    let document_file_class = find_class("androidx/documentfile/provider/DocumentFile")?;
     let parent = env.call_static_method(
         &document_file_class,
         "fromTreeUri",
@@ -350,6 +352,10 @@ impl AndroidFileOps for AndroidFile {
             .get_static_field(document_class, "MIME_TYPE_DIR", "Ljava/lang/String;")?
             .l()?;
 
+        // Resolve via the cached app ClassLoader: a bare FindClass from a
+        // Rust-spawned thread hits the boot classloader and misses androidx.
+        let document_file_class = find_class("androidx/documentfile/provider/DocumentFile")?;
+
         let mut files = Vec::new();
         // Check if cursor is not null
         if !cursor.is_null() {
@@ -435,10 +441,9 @@ impl AndroidFileOps for AndroidFile {
                     .z()?;
 
                 // Create DocumentFile object
-                let document_file_class = "androidx/documentfile/provider/DocumentFile";
                 let document_file = env
                     .call_static_method(
-                        document_file_class,
+                        &document_file_class,
                         "fromSingleUri",
                         "(Landroid/content/Context;Landroid/net/Uri;)Landroidx/documentfile/provider/DocumentFile;",
                         &[JValueGen::Object(context.as_obj()), JValueGen::Object(&child_uri)],
