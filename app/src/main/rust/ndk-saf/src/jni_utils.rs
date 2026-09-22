@@ -146,27 +146,28 @@ pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     let mut env_guard = get_env()?;
     let env = &mut *env_guard;
 
-    // Try to acquire read locks safely
-    if let (Ok(class_loader_lock), Ok(_find_class_method_lock)) =
-        (CLASS_LOADER.read(), FIND_CLASS_METHOD.read())
-    {
-        if let Some(class_loader) = class_loader_lock.as_ref() {
-            let class_name_jstring = env.new_string(class_name)?;
-            let result = env.call_method(
-                class_loader.as_obj(),
-                "findClass",
-                "(Ljava/lang/String;)Ljava/lang/Class;",
-                &[(&class_name_jstring).into()],
-            )?;
-            Ok(JClass::from(result.l()?))
-        } else {
-            // Fallback to standard FindClass if ClassLoader not initialized
-            env.find_class(class_name)
-        }
-    } else {
-        // Fallback to standard FindClass if locks cannot be acquired
-        env.find_class(class_name)
-    }
+    // A bare FindClass fallback is never acceptable here: on Rust-spawned
+    // threads it resolves through the boot classloader, which cannot see app
+    // dex classes and turns a configuration bug into a confusing process-level
+    // crash. Fail loudly instead so the real cause (ClassLoader cache not
+    // initialized) surfaces immediately.
+    let class_loader_lock = CLASS_LOADER.read().map_err(|_| {
+        jni::errors::Error::NullPtr("ClassLoader lock poisoned")
+    })?;
+    let class_loader = class_loader_lock.as_ref().ok_or_else(|| {
+        jni::errors::Error::NullPtr(
+            "App ClassLoader not initialized; initialize_class_loader must run first",
+        )
+    })?;
+
+    let class_name_jstring = env.new_string(class_name)?;
+    let result = env.call_method(
+        class_loader.as_obj(),
+        "findClass",
+        "(Ljava/lang/String;)Ljava/lang/Class;",
+        &[(&class_name_jstring).into()],
+    )?;
+    Ok(JClass::from(result.l()?))
 }
 
 /// Cleanup function for global references and JavaVM (call when library unloads)
