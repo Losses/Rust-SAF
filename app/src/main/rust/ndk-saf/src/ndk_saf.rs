@@ -3,7 +3,7 @@ use std::{
     os::{fd::FromRawFd, unix::io::RawFd},
 };
 
-use crate::jni_utils::{find_class, get_env};
+use crate::jni_utils::{clear_pending_exception, find_class, get_env};
 use anyhow::{anyhow, Ok, Result};
 use jni::{
     objects::{GlobalRef, JObject, JString, JValueGen},
@@ -127,8 +127,16 @@ pub fn from_tree_url(url: &str) -> Result<AndroidFile> {
     let mut env_guard = get_env()?;
     let env = &mut *env_guard;
 
-    let document_file = document_file_from_url(env, url)?;
-    from_document_file(&document_file)
+    // NOTE: this crate imports `anyhow::Ok`, which is a function, not the
+    // Result variant: `Ok(..)` is therefore unusable as a pattern here.
+    let result = document_file_from_url(env, url)
+        .and_then(|document_file| from_document_file(&document_file));
+    if result.is_err() {
+        // A pending Java exception would be rethrown by ART when this native
+        // thread unwinds, killing the process instead of reporting a failure.
+        clear_pending_exception(env);
+    }
+    result
 }
 
 /// Create an AndroidFile object from a DocumentFile Java object.

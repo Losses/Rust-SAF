@@ -141,6 +141,22 @@ pub fn get_env() -> Result<AttachGuard<'static>, jni::errors::Error> {
     }
 }
 
+/// Clear a Java exception left pending on this thread.
+///
+/// ART rethrows a pending exception when the native thread unwinds or detaches,
+/// which aborts the whole process ("FATAL EXCEPTION: Thread-N"). Every failure
+/// we are about to surface as `Err` must therefore be cleared first: a failed
+/// file operation should degrade to an error, never kill the app.
+pub fn clear_pending_exception(env: &mut JNIEnv) {
+    match env.exception_check() {
+        Ok(true) => {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+        }
+        _ => {}
+    }
+}
+
 /// Generic class finding function that uses the cached ClassLoader
 pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     let mut env_guard = get_env()?;
@@ -161,13 +177,30 @@ pub fn find_class(class_name: &str) -> Result<JClass<'_>, jni::errors::Error> {
     })?;
 
     let class_name_jstring = env.new_string(class_name)?;
-    let result = env.call_method(
+    let result = match env.call_method(
         class_loader.as_obj(),
         "findClass",
         "(Ljava/lang/String;)Ljava/lang/Class;",
         &[(&class_name_jstring).into()],
-    )?;
-    Ok(JClass::from(result.l()?))
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            // The Java side threw (typically ClassNotFoundException). Leaving
+            // it pending would abort the process; clear it and let the caller
+            // deal with an ordinary error instead.
+            error!("findClass({class_name}) failed: {err:?}");
+            clear_pending_exception(env);
+            return Err(err);
+        }
+    };
+
+    match result.l() {
+        Ok(class) => Ok(JClass::from(class)),
+        Err(err) => {
+            clear_pending_exception(env);
+            Err(err)
+        }
+    }
 }
 
 /// Cleanup function for global references and JavaVM (call when library unloads)
