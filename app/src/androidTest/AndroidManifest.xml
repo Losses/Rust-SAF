@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Test-only provider: all entries are synthetic, and it accepts no writes. -->
+        <provider android:name="one.rachelt.rust_saf.ListingProvider"
+            android:authorities="one.rachelt.rust_saf.test.listings" android:exported="true" />
+    </application>
+</manifest>
