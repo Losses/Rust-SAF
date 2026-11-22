@@ -84,6 +84,10 @@ Opens the file represented by the `AndroidFile` object. This method will fail if
 
 Lists the files and directories within the directory represented by the `AndroidFile` object. This method will fail if the `AndroidFile` is not a directory.
 
+A successful empty list means the provider returned a complete listing with no
+children. A missing cursor, a provider error, or a listing that is still loading
+returns an error instead; callers should not reconcile deletions from it.
+
 - **Returns:**
   - A `Result` containing a `Vec<AndroidFile>` with the contents of the directory, or an error if the operation fails.
 - **Note:** This operation can be slow due to the underlying Android SAF implementation.

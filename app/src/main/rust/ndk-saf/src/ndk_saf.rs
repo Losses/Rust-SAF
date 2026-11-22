@@ -366,14 +366,55 @@ impl AndroidFileOps for AndroidFile {
             )?
             .l()?;
 
-        // Get MIME type for directory to compare against
-        let mime_type_dir = env
-            .get_static_field(document_class, "MIME_TYPE_DIR", "Ljava/lang/String;")?
-            .l()?;
-
-        let mut files = Vec::new();
-        // Check if cursor is not null
-        if !cursor.is_null() {
+        anyhow::ensure!(
+            !cursor.is_null(),
+            "Document provider returned no directory cursor"
+        );
+        let listing = (|| -> Result<Vec<AndroidFile>> {
+            let extras = env
+                .call_method(&cursor, "getExtras", "()Landroid/os/Bundle;", &[])?
+                .l()?;
+            if !extras.is_null() {
+                let loading_key = env
+                    .get_static_field(
+                        documents_contract_class,
+                        "EXTRA_LOADING",
+                        "Ljava/lang/String;",
+                    )?
+                    .l()?;
+                let loading = env
+                    .call_method(
+                        &extras,
+                        "getBoolean",
+                        "(Ljava/lang/String;)Z",
+                        &[(&loading_key).into()],
+                    )?
+                    .z()?;
+                anyhow::ensure!(!loading, "Document provider is still loading the directory");
+                let error_key = env
+                    .get_static_field(
+                        documents_contract_class,
+                        "EXTRA_ERROR",
+                        "Ljava/lang/String;",
+                    )?
+                    .l()?;
+                let error = env
+                    .call_method(
+                        &extras,
+                        "getString",
+                        "(Ljava/lang/String;)Ljava/lang/String;",
+                        &[(&error_key).into()],
+                    )?
+                    .l()?;
+                anyhow::ensure!(
+                    error.is_null(),
+                    "Document provider reported a directory listing error"
+                );
+            }
+            let mime_type_dir = env
+                .get_static_field(document_class, "MIME_TYPE_DIR", "Ljava/lang/String;")?
+                .l()?;
+            let mut files = Vec::new();
             // Iterate through the cursor
             while env.call_method(&cursor, "moveToNext", "()Z", &[])?.z()? {
                 // Get column values
@@ -466,9 +507,19 @@ impl AndroidFileOps for AndroidFile {
                     is_dir,
                 });
             }
-            // Close the cursor
-            env.call_method(&cursor, "close", "()V", &[])?.v()?;
+            Ok(files)
+        })();
+        if listing.is_err() {
+            clear_pending_exception(env);
         }
+        let closed = env
+            .call_method(&cursor, "close", "()V", &[])
+            .and_then(|r| r.v());
+        if closed.is_err() {
+            clear_pending_exception(env);
+        }
+        let mut files = listing?;
+        closed?;
 
         // Sort files by name
         files.sort_by(|a, b| a.filename.cmp(&b.filename));
